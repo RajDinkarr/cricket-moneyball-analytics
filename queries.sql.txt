@@ -1,0 +1,101 @@
+-- ====================================================================
+-- MULTI-FORMAT CRICKET MONEYBALL ANALYTICS ENGINE
+-- Database: PostgreSQL
+-- Author: Raj
+-- Description: Core database architecture and format-specific analytics
+-- ====================================================================
+
+-- ==========================================
+-- 🛠️ STEP 1: DATABASE SCHEMA DESIGN
+-- ==========================================
+-- Drops old table layout if it exists to ensure a clean slate
+DROP TABLE IF EXISTS ball_by_ball;
+
+-- Recreates table with optimized NUMERIC(4,1) to prevent Test match over overflows
+CREATE TABLE ball_by_ball (
+    match_id INT,
+    format VARCHAR(10),
+    over NUMERIC(4,1), 
+    striker VARCHAR(100),
+    bowler VARCHAR(100),
+    runs_off_bat INT,
+    extras INT,
+    wicket_type VARCHAR(50),
+    player_dismissed VARCHAR(100),
+    match_phase VARCHAR(50),
+    is_four INT,
+    is_six INT,
+    is_dot INT
+);
+
+
+-- ==========================================
+-- 📊 STEP 2: PIPELINE VALIDATION CHECK
+-- ==========================================
+-- Verifies that genuine, non-zero run data has successfully imported across formats
+SELECT 
+    format, 
+    SUM(runs_off_bat) AS check_runs, 
+    COUNT(*) AS check_balls
+FROM ball_by_ball
+GROUP BY format;
+
+
+-- ==========================================
+-- 💥 PHASE 1: T20 POWER-HITTER LEADERBOARD
+-- ==========================================
+-- Evaluates scoring velocity and boundary frequency (Minimum 30 balls faced)
+SELECT 
+    striker AS batsman,
+    COUNT(*) AS balls_faced,
+    SUM(runs_off_bat) AS total_runs,
+    ROUND((SUM(runs_off_bat)::NUMERIC / COUNT(*)) * 100, 2) AS strike_rate,
+    SUM(is_four) AS total_fours,
+    SUM(is_six) AS total_sixes,
+    ROUND((SUM(is_four + is_six)::NUMERIC / COUNT(*)) * 100, 2) AS boundary_percentage
+FROM ball_by_ball
+WHERE format LIKE '%T20%' OR format LIKE '%t20%'
+GROUP BY striker
+HAVING COUNT(*) >= 30
+ORDER BY strike_rate DESC;
+
+
+-- ==========================================
+-- 🏏 PHASE 2: ODI ANCHOR LEADERBOARD
+-- ==========================================
+-- Evaluates strike rotation and scoring consistency (Minimum 100 balls faced)
+SELECT 
+    striker AS batsman,
+    COUNT(*) AS balls_faced,
+    SUM(runs_off_bat) AS total_runs,
+    COUNT(DISTINCT match_id) AS matches_played,
+    ROUND(SUM(runs_off_bat)::NUMERIC / COUNT(DISTINCT match_id), 2) AS avg_runs_per_match,
+    ROUND((SUM(is_dot)::NUMERIC / COUNT(*)) * 100, 2) AS dot_ball_percentage
+FROM ball_by_ball
+WHERE format LIKE '%ODI%' OR format LIKE '%odi%'
+GROUP BY striker
+HAVING COUNT(*) >= 100
+ORDER BY avg_runs_per_match DESC;
+
+
+-- ==========================================
+-- 🛡️ PHASE 3: TEST MATCH "WALL" LEADERBOARD
+-- ==========================================
+-- Evaluates survival resilience and defensive stamina (Minimum 150 balls faced)
+SELECT 
+    striker AS batsman,
+    COUNT(*) AS total_balls_faced,
+    SUM(runs_off_bat) AS total_test_runs,
+    SUM(is_dot) AS defensive_dot_balls,
+    ROUND((SUM(is_dot)::NUMERIC / COUNT(*)) * 100, 2) AS defensive_resilience_pct,
+    COUNT(CASE WHEN wicket_type IS NOT NULL AND player_dismissed = striker THEN 1 END) AS times_out,
+    ROUND(
+        COUNT(*)::NUMERIC / 
+        NULLIF(COUNT(CASE WHEN wicket_type IS NOT NULL AND player_dismissed = striker THEN 1 END), 0), 
+        1
+    ) AS balls_per_dismissal
+FROM ball_by_ball
+WHERE format LIKE '%Test%' OR format LIKE '%test%'
+GROUP BY striker
+HAVING COUNT(*) >= 150
+ORDER BY balls_per_dismissal DESC;
